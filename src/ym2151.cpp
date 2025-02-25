@@ -48,7 +48,8 @@ float getSine(float phase) {
 }
 
 // Operator実装
-Operator::Operator() : envelope_(0.0f), phase_(0.0f), output_(0.0f) {
+Operator::Operator() : envelope_(0.0f), phase_(0.0f), output_(0.0f), 
+                       env_state_(EnvelopeState::IDLE), env_level_(0.0f), env_rate_(0.0f) {
     initSineTable();
     reset();
 }
@@ -60,6 +61,11 @@ void Operator::reset() {
     envelope_ = 0.0f;
     phase_ = 0.0f;
     output_ = 0.0f;
+    
+    // エンベロープ状態のリセット
+    env_state_ = EnvelopeState::IDLE;
+    env_level_ = 0.0f;
+    env_rate_ = 0.0f;
     
     // デフォルトパラメータの設定
     params_.dt1 = 0;
@@ -80,6 +86,88 @@ void Operator::setParameter(const FMParameter& param) {
     params_ = param;
 }
 
+void Operator::keyOn() {
+    // アタックフェーズの開始
+    env_state_ = EnvelopeState::ATTACK;
+    
+    // アタックレートの設定
+    env_rate_ = params_.ar * ATTACK_RATE_FACTOR;
+    
+    // アタックが最速の場合は即座に最大レベルに
+    if (params_.ar == 31) {
+        env_level_ = 1.0f;
+        env_state_ = EnvelopeState::DECAY;
+        env_rate_ = params_.dr * DECAY_RATE_FACTOR;
+    }
+}
+
+void Operator::keyOff() {
+    // リリースフェーズの開始
+    env_state_ = EnvelopeState::RELEASE;
+    
+    // リリースレートの設定
+    env_rate_ = params_.rr * RELEASE_RATE_FACTOR;
+}
+
+void Operator::updateEnvelope() {
+    // エンベロープ状態に応じた処理
+    switch (env_state_) {
+        case EnvelopeState::IDLE:
+            // アイドル状態では何もしない
+            break;
+            
+        case EnvelopeState::ATTACK:
+            // アタックフェーズ：指数関数的に上昇
+            env_level_ += (1.0f - env_level_) * env_rate_;
+            
+            // 閾値に達したらディケイフェーズへ
+            if (env_level_ > 0.99f) {
+                env_level_ = 1.0f;
+                env_state_ = EnvelopeState::DECAY;
+                env_rate_ = params_.dr * DECAY_RATE_FACTOR;
+            }
+            break;
+            
+        case EnvelopeState::DECAY:
+            // ディケイフェーズ：指数関数的に減衰
+            env_level_ -= env_level_ * env_rate_;
+            
+            // サスティンレベルに達したらサスティンフェーズへ
+            float sustain_level = 1.0f - (params_.sl / 15.0f);
+            if (env_level_ <= sustain_level) {
+                env_level_ = sustain_level;
+                env_state_ = EnvelopeState::SUSTAIN;
+                env_rate_ = params_.sr * SUSTAIN_RATE_FACTOR;
+            }
+            break;
+            
+        case EnvelopeState::SUSTAIN:
+            // サスティンフェーズ：緩やかに減衰
+            env_level_ -= env_level_ * env_rate_;
+            
+            // 最小レベルに達したら停止
+            if (env_level_ < 0.001f) {
+                env_level_ = 0.0f;
+                env_state_ = EnvelopeState::IDLE;
+            }
+            break;
+            
+        case EnvelopeState::RELEASE:
+            // リリースフェーズ：指数関数的に減衰
+            env_level_ -= env_level_ * env_rate_;
+            
+            // 最小レベルに達したら停止
+            if (env_level_ < 0.001f) {
+                env_level_ = 0.0f;
+                env_state_ = EnvelopeState::IDLE;
+            }
+            break;
+    }
+    
+    // エンベロープレベルをエンベロープ値に適用
+    envelope_ = env_level_;
+}
+
 float Operator::getOutput(float phase, float modulation) {
     // デチューン値の適用
     float detune = params_.dt1 * 0.05f + params_.dt2 * 0.1f;
@@ -97,7 +185,10 @@ float Operator::getOutput(float phase, float modulation) {
     // サイン波生成
     float sine_value = getSine(phase_);
     
-    // エンベロープの適用
+    // エンベロープの更新
+    updateEnvelope();
+    
+    // エンベロープの適用（トータルレベルも考慮）
     output_ = sine_value * envelope_ * (1.0f - params_.tl / 127.0f);
     
     return output_;
@@ -140,12 +231,27 @@ void Channel::setFeedback(uint8_t feedback) {
 
 void Channel::keyOn() {
     keyOnFlag_ = true;
-    // ここでエンベロープのアタックフェーズを開始する処理を追加
+    
+    // 各オペレータのキーオン処理
+    for (auto& op : operators_) {
+        op.keyOn();
+    }
 }
 
 void Channel::keyOff() {
     keyOnFlag_ = false;
-    // ここでエンベロープのリリースフェーズを開始する処理を追加
+    
+    // 各オペレータのキーオフ処理
+    for (auto& op : operators_) {
+        op.keyOff();
+    }
+}
+
+void Channel::updateEnvelopes() {
+    // 各オペレータのエンベロープ更新
+    for (auto& op : operators_) {
+        op.updateEnvelope();
+    }
 }
 
 Operator& Channel::getOperator(int index) {
@@ -417,6 +523,7 @@ void Chip::generate(float* buffer, int samples) {
         // 全チャンネルの出力を合成
         float output = 0.0f;
         for (auto& channel : channels_) {
+            // エンベロープの更新はgetOutput内で行われるため不要
             output += channel.getOutput();
         }
         
