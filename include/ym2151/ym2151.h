@@ -33,6 +33,15 @@ struct FMParameter {
     bool    ssgeg;  // SSG-EG
 };
 
+// エンベロープの状態
+enum class EnvelopeState {
+    IDLE,
+    ATTACK,
+    DECAY,
+    SUSTAIN,
+    RELEASE
+};
+
 // オペレータクラス
 class Operator {
 public:
@@ -42,12 +51,22 @@ public:
     void reset();
     void setParameter(const FMParameter& param);
     float getOutput(float phase, float modulation);
+    
+    // エンベロープ制御
+    void keyOn();
+    void keyOff();
+    void updateEnvelope();
 
 private:
     FMParameter params_;
     float envelope_;
     float phase_;
     float output_;
+    
+    // エンベロープ関連
+    EnvelopeState env_state_;
+    float env_level_;
+    float env_rate_;
 };
 
 // チャンネルクラス
@@ -62,6 +81,7 @@ public:
     void setFeedback(uint8_t feedback);
     void keyOn();
     void keyOff();
+    void updateEnvelopes();
     float getOutput();
 
     Operator& getOperator(int index);
