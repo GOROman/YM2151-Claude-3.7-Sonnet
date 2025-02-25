@@ -110,6 +110,9 @@ void Operator::keyOff() {
 }
 
 void Operator::updateEnvelope() {
+    // サスティンレベルを事前に計算
+    float sustain_level = 1.0f - (params_.sl / 15.0f);
+    
     // エンベロープ状態に応じた処理
     switch (env_state_) {
         case EnvelopeState::IDLE:
@@ -133,7 +136,6 @@ void Operator::updateEnvelope() {
             env_level_ -= env_level_ * env_rate_;
             
             // サスティンレベルに達したらサスティンフェーズへ
-            float sustain_level = 1.0f - (params_.sl / 15.0f);
             if (env_level_ <= sustain_level) {
                 env_level_ = sustain_level;
                 env_state_ = EnvelopeState::SUSTAIN;
