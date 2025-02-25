@@ -96,6 +96,7 @@ private:
     bool keyOnFlag_;
     float output_;
     float feedback_buffer_[2];
+    float phase_accumulator_; // 位相累積用の変数
 };
 
 // YM2151チップクラス

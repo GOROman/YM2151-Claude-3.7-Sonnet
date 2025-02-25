@@ -1,6 +1,7 @@
 #include "ym2151/ym2151.h"
 #include <cmath>
 #include <algorithm>
+#include <iostream>
 
 namespace YM2151 {
 
@@ -43,7 +44,19 @@ void initSineTable() {
 
 // サイン波の取得（テーブル参照）
 float getSine(float phase) {
+    // テーブルが初期化されていない場合は初期化
+    initSineTable();
+    
+    // 位相をインデックスに変換
     int index = static_cast<int>(phase * SINE_TABLE_SIZE / TWO_PI) & (SINE_TABLE_SIZE - 1);
+    
+    // デバッグ出力
+    static bool debug_printed = false;
+    if (!debug_printed) {
+        std::cout << "getSine - phase: " << phase << ", index: " << index << ", value: " << sine_table[index] << std::endl;
+        debug_printed = true;
+    }
+    
     return sine_table[index];
 }
 
@@ -90,15 +103,24 @@ void Operator::keyOn() {
     // アタックフェーズの開始
     env_state_ = EnvelopeState::ATTACK;
     
-    // アタックレートの設定
-    env_rate_ = params_.ar * ATTACK_RATE_FACTOR;
+    // アタックレートの設定（より速い応答のために調整）
+    env_rate_ = params_.ar * ATTACK_RATE_FACTOR * 10.0f;
     
     // アタックが最速の場合は即座に最大レベルに
     if (params_.ar == 31) {
         env_level_ = 1.0f;
         env_state_ = EnvelopeState::DECAY;
         env_rate_ = params_.dr * DECAY_RATE_FACTOR;
+    } else {
+        // アタックレートが最速でない場合も、より高い初期レベルを設定
+        env_level_ = 0.8f;
     }
+    
+    // エンベロープ値を即座に反映
+    envelope_ = env_level_;
+    
+    // デバッグ出力
+    std::cout << "Operator::keyOn - env_level: " << env_level_ << ", env_rate: " << env_rate_ << ", envelope: " << envelope_ << std::endl;
 }
 
 void Operator::keyOff() {
@@ -166,8 +188,8 @@ void Operator::updateEnvelope() {
             break;
     }
     
-    // エンベロープレベルをエンベロープ値に適用
-    envelope_ = env_level_;
+    // エンベロープレベルをエンベロープ値に適用（より強い出力のために調整）
+    envelope_ = env_level_ * 2.0f;  // 出力を2倍に増幅
 }
 
 float Operator::getOutput(float phase, float modulation) {
@@ -178,26 +200,39 @@ float Operator::getOutput(float phase, float modulation) {
     float frequency_multiplier = params_.mul ? params_.mul : 0.5f;
     
     // 位相計算（変調を含む）
-    phase_ = phase * frequency_multiplier + detune + modulation;
+    float current_phase = phase * frequency_multiplier + detune + modulation;
     
     // 位相を0〜2πの範囲に正規化
-    while (phase_ >= TWO_PI) phase_ -= TWO_PI;
-    while (phase_ < 0) phase_ += TWO_PI;
+    while (current_phase >= TWO_PI) current_phase -= TWO_PI;
+    while (current_phase < 0) current_phase += TWO_PI;
     
     // サイン波生成
-    float sine_value = getSine(phase_);
+    float sine_value = getSine(current_phase);
     
     // エンベロープの更新
     updateEnvelope();
     
     // エンベロープの適用（トータルレベルも考慮）
-    output_ = sine_value * envelope_ * (1.0f - params_.tl / 127.0f);
+    // トータルレベルを計算（0が最大音量、127が最小音量）
+    float level = 1.0f;  // デバッグ用に一時的に1.0に設定
+    
+    // 出力レベルを調整（音量を適切なレベルに調整）
+    output_ = sine_value * envelope_ * level * 8192.0f;
+    
+    // デバッグ出力
+    static bool debug_printed = false;
+    if (!debug_printed) {
+        std::cout << "Operator::getOutput - phase: " << current_phase << ", sine: " << sine_value
+                  << ", env: " << envelope_ << ", level: " << level
+                  << ", output: " << output_ << std::endl;
+        debug_printed = true;
+    }
     
     return output_;
 }
 
 // Channel実装
-Channel::Channel() : frequency_(0), algorithm_(0), feedback_(0), sample_rate_(44100), keyOnFlag_(false), output_(0.0f) {
+Channel::Channel() : frequency_(0), algorithm_(0), feedback_(0), sample_rate_(44100), keyOnFlag_(false), output_(0.0f), phase_accumulator_(0.0f) {
     feedback_buffer_[0] = 0.0f;
     feedback_buffer_[1] = 0.0f;
     reset();
@@ -218,6 +253,7 @@ void Channel::reset() {
     output_ = 0.0f;
     feedback_buffer_[0] = 0.0f;
     feedback_buffer_[1] = 0.0f;
+    phase_accumulator_ = 0.0f;  // 位相累積変数の初期化
 }
 
 void Channel::setSampleRate(uint32_t rate) {
@@ -243,6 +279,9 @@ void Channel::keyOn() {
     for (auto& op : operators_) {
         op.keyOn();
     }
+    
+    // デバッグ出力
+    std::cout << "Channel::keyOn - frequency: " << frequency_ << ", algorithm: " << static_cast<int>(algorithm_) << std::endl;
 }
 
 void Channel::keyOff() {
@@ -266,8 +305,10 @@ Operator& Channel::getOperator(int index) {
 }
 
 float Channel::getOutput() {
-    // 基本位相の計算
-    float base_phase = TWO_PI * frequency_ / static_cast<float>(sample_rate_);
+    // 基本位相の計算（累積）
+    float phase_increment = TWO_PI * frequency_ / static_cast<float>(sample_rate_);
+    phase_accumulator_ += phase_increment;
+    if (phase_accumulator_ >= TWO_PI) phase_accumulator_ -= TWO_PI;
     
     // フィードバック値の計算
     float feedback = 0.0f;
@@ -278,70 +319,89 @@ float Channel::getOutput() {
     // アルゴリズムに基づいて各オペレータの出力を計算
     float op_outputs[4] = {0.0f, 0.0f, 0.0f, 0.0f};
     
+    // キーオンフラグがfalseの場合は0を返す
+    if (!keyOnFlag_) {
+        return 0.0f;
+    }
+    
+    // デバッグ出力
+    std::cout << "Channel::getOutput - phase_accumulator: " << phase_accumulator_ << ", frequency: " << frequency_ << std::endl;
+    
     // アルゴリズムに応じた接続パターンで計算
     switch (algorithm_) {
         case 0:  // OP1->OP2->OP3->OP4->出力
-            op_outputs[0] = operators_[0].getOutput(base_phase, feedback);
-            op_outputs[1] = operators_[1].getOutput(base_phase, op_outputs[0]);
-            op_outputs[2] = operators_[2].getOutput(base_phase, op_outputs[1]);
-            op_outputs[3] = operators_[3].getOutput(base_phase, op_outputs[2]);
+            op_outputs[0] = operators_[0].getOutput(phase_accumulator_, feedback);
+            op_outputs[1] = operators_[1].getOutput(phase_accumulator_, op_outputs[0]);
+            op_outputs[2] = operators_[2].getOutput(phase_accumulator_, op_outputs[1]);
+            op_outputs[3] = operators_[3].getOutput(phase_accumulator_, op_outputs[2]);
             output_ = op_outputs[3];
             break;
             
         case 1:  // OP1->OP2->OP4->出力, OP3->出力
-            op_outputs[0] = operators_[0].getOutput(base_phase, feedback);
-            op_outputs[1] = operators_[1].getOutput(base_phase, op_outputs[0]);
-            op_outputs[2] = operators_[2].getOutput(base_phase, 0.0f);
-            op_outputs[3] = operators_[3].getOutput(base_phase, op_outputs[1]);
+            op_outputs[0] = operators_[0].getOutput(phase_accumulator_, feedback);
+            op_outputs[1] = operators_[1].getOutput(phase_accumulator_, op_outputs[0]);
+            op_outputs[2] = operators_[2].getOutput(phase_accumulator_, 0.0f);
+            op_outputs[3] = operators_[3].getOutput(phase_accumulator_, op_outputs[1]);
             output_ = op_outputs[2] + op_outputs[3];
             break;
             
         case 2:  // OP1->OP3->OP4->出力, OP2->出力
-            op_outputs[0] = operators_[0].getOutput(base_phase, feedback);
-            op_outputs[1] = operators_[1].getOutput(base_phase, 0.0f);
-            op_outputs[2] = operators_[2].getOutput(base_phase, op_outputs[0]);
-            op_outputs[3] = operators_[3].getOutput(base_phase, op_outputs[2]);
+            op_outputs[0] = operators_[0].getOutput(phase_accumulator_, feedback);
+            op_outputs[1] = operators_[1].getOutput(phase_accumulator_, 0.0f);
+            op_outputs[2] = operators_[2].getOutput(phase_accumulator_, op_outputs[0]);
+            op_outputs[3] = operators_[3].getOutput(phase_accumulator_, op_outputs[2]);
             output_ = op_outputs[1] + op_outputs[3];
             break;
             
         case 3:  // OP1->OP3->出力, OP2->OP4->出力
-            op_outputs[0] = operators_[0].getOutput(base_phase, feedback);
-            op_outputs[1] = operators_[1].getOutput(base_phase, 0.0f);
-            op_outputs[2] = operators_[2].getOutput(base_phase, op_outputs[0]);
-            op_outputs[3] = operators_[3].getOutput(base_phase, op_outputs[1]);
+            op_outputs[0] = operators_[0].getOutput(phase_accumulator_, feedback);
+            op_outputs[1] = operators_[1].getOutput(phase_accumulator_, 0.0f);
+            op_outputs[2] = operators_[2].getOutput(phase_accumulator_, op_outputs[0]);
+            op_outputs[3] = operators_[3].getOutput(phase_accumulator_, op_outputs[1]);
             output_ = op_outputs[2] + op_outputs[3];
             break;
             
         case 4:  // OP1->OP2->出力, OP3->OP4->出力
-            op_outputs[0] = operators_[0].getOutput(base_phase, feedback);
-            op_outputs[1] = operators_[1].getOutput(base_phase, op_outputs[0]);
-            op_outputs[2] = operators_[2].getOutput(base_phase, 0.0f);
-            op_outputs[3] = operators_[3].getOutput(base_phase, op_outputs[2]);
+            op_outputs[0] = operators_[0].getOutput(phase_accumulator_, feedback);
+            op_outputs[1] = operators_[1].getOutput(phase_accumulator_, op_outputs[0]);
+            op_outputs[2] = operators_[2].getOutput(phase_accumulator_, 0.0f);
+            op_outputs[3] = operators_[3].getOutput(phase_accumulator_, op_outputs[2]);
             output_ = op_outputs[1] + op_outputs[3];
+            
+            // デバッグ出力
+            std::cout << "Algorithm 4 - op_outputs: " << op_outputs[0] << ", " << op_outputs[1] << ", " << op_outputs[2] << ", " << op_outputs[3] << ", output: " << output_ << std::endl;
             break;
             
         case 5:  // OP1->OP2->出力, OP3->出力, OP4->出力
-            op_outputs[0] = operators_[0].getOutput(base_phase, feedback);
-            op_outputs[1] = operators_[1].getOutput(base_phase, op_outputs[0]);
-            op_outputs[2] = operators_[2].getOutput(base_phase, 0.0f);
-            op_outputs[3] = operators_[3].getOutput(base_phase, 0.0f);
+            op_outputs[0] = operators_[0].getOutput(phase_accumulator_, feedback);
+            op_outputs[1] = operators_[1].getOutput(phase_accumulator_, op_outputs[0]);
+            op_outputs[2] = operators_[2].getOutput(phase_accumulator_, 0.0f);
+            op_outputs[3] = operators_[3].getOutput(phase_accumulator_, 0.0f);
             output_ = op_outputs[1] + op_outputs[2] + op_outputs[3];
             break;
             
         case 6:  // OP1->出力, OP2->OP3->出力, OP4->出力
-            op_outputs[0] = operators_[0].getOutput(base_phase, feedback);
-            op_outputs[1] = operators_[1].getOutput(base_phase, 0.0f);
-            op_outputs[2] = operators_[2].getOutput(base_phase, op_outputs[1]);
-            op_outputs[3] = operators_[3].getOutput(base_phase, 0.0f);
+            op_outputs[0] = operators_[0].getOutput(phase_accumulator_, feedback);
+            op_outputs[1] = operators_[1].getOutput(phase_accumulator_, 0.0f);
+            op_outputs[2] = operators_[2].getOutput(phase_accumulator_, op_outputs[1]);
+            op_outputs[3] = operators_[3].getOutput(phase_accumulator_, 0.0f);
             output_ = op_outputs[0] + op_outputs[2] + op_outputs[3];
             break;
             
         case 7:  // OP1->出力, OP2->出力, OP3->出力, OP4->出力
-            op_outputs[0] = operators_[0].getOutput(base_phase, feedback);
-            op_outputs[1] = operators_[1].getOutput(base_phase, 0.0f);
-            op_outputs[2] = operators_[2].getOutput(base_phase, 0.0f);
-            op_outputs[3] = operators_[3].getOutput(base_phase, 0.0f);
+            op_outputs[0] = operators_[0].getOutput(phase_accumulator_, feedback);
+            op_outputs[1] = operators_[1].getOutput(phase_accumulator_, 0.0f);
+            op_outputs[2] = operators_[2].getOutput(phase_accumulator_, 0.0f);
+            op_outputs[3] = operators_[3].getOutput(phase_accumulator_, 0.0f);
             output_ = op_outputs[0] + op_outputs[1] + op_outputs[2] + op_outputs[3];
+            
+            // デバッグ出力
+            std::cout << "Algorithm 7 - op_outputs: " << op_outputs[0] << ", " << op_outputs[1] << ", " << op_outputs[2] << ", " << op_outputs[3] << ", output: " << output_ << std::endl;
+            break;
+            
+        default:
+            // デフォルトケース（単純なサイン波）
+            output_ = std::sin(phase_accumulator_);
             break;
     }
     
@@ -539,6 +599,9 @@ void Chip::generate(float* buffer, int samples) {
             // エンベロープの更新はgetOutput内で行われるため不要
             output += channel.getOutput();
         }
+        
+        // 出力レベルを調整（音量を大きくする）
+        output *= 100.0f;
         
         // 出力バッファに書き込み
         buffer[i] = output;

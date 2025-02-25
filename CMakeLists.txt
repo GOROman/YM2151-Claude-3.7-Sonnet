@@ -24,6 +24,10 @@ target_include_directories(ym2151 PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 add_executable(simple_tone examples/simple_tone.cpp)
 target_link_libraries(simple_tone PRIVATE ym2151)
 
+# ピアノ音階サンプルプログラム
+add_executable(piano_scale examples/piano_scale.cpp)
+target_link_libraries(piano_scale PRIVATE ym2151)
+
 # インストール設定
 install(TARGETS ym2151 DESTINATION lib)
 install(DIRECTORY include/ DESTINATION include)
