@@ -79,45 +79,56 @@ int main() {
     // チャンネル0を使用
     const int channel = 0;
     
-    // アルゴリズム4（OP1->OP2->出力, OP3->OP4->出力）とフィードバック0を設定
-    chip.setRegister(0x20 + channel, 4);  // アルゴリズム4, フィードバック0
+    // アルゴリズム7（OP4のみ出力）とフィードバック0を設定
+    chip.setRegister(0x20 + channel, 7);  // アルゴリズム7, フィードバック0
     
-    // オペレータ1の設定
+    // オペレータ1の設定（使用しない）
     chip.setRegister(0x40, 0x7F);  // TL (Total Level) = 127 (最小音量)
     chip.setRegister(0x80, 0x1F);  // AR (Attack Rate) = 31 (最速)
-    chip.setRegister(0xA0, 0x00);  // DR (Decay Rate) = 0 (最遅)
-    chip.setRegister(0xC0, 0x00);  // SR (Sustain Rate) = 0 (最遅)
-    chip.setRegister(0xE0, 0x0F);  // RR (Release Rate) = 15 (中速)
+    chip.setRegister(0xA0, 0x00);  // DR (Decay Rate) = 0
+    chip.setRegister(0xC0, 0x00);  // SR (Sustain Rate) = 0
+    chip.setRegister(0xE0, 0x0F);  // RR (Release Rate) = 15
     
-    // オペレータ2の設定
-    chip.setRegister(0x41, 0x00);  // TL (Total Level) = 0 (最大音量)
+    // オペレータ2の設定（使用しない）
+    chip.setRegister(0x41, 0x7F);  // TL (Total Level) = 127 (最小音量)
     chip.setRegister(0x81, 0x1F);  // AR (Attack Rate) = 31 (最速)
-    chip.setRegister(0xA1, 0x05);  // DR (Decay Rate) = 5
-    chip.setRegister(0xC1, 0x05);  // SR (Sustain Rate) = 5
-    chip.setRegister(0xE1, 0x0F);  // RR (Release Rate) = 15 (中速)
+    chip.setRegister(0xA1, 0x00);  // DR (Decay Rate) = 0
+    chip.setRegister(0xC1, 0x00);  // SR (Sustain Rate) = 0
+    chip.setRegister(0xE1, 0x0F);  // RR (Release Rate) = 15
     
-    // オペレータ3の設定
+    // オペレータ3の設定（使用しない）
     chip.setRegister(0x42, 0x7F);  // TL (Total Level) = 127 (最小音量)
     chip.setRegister(0x82, 0x1F);  // AR (Attack Rate) = 31 (最速)
-    chip.setRegister(0xA2, 0x00);  // DR (Decay Rate) = 0 (最遅)
-    chip.setRegister(0xC2, 0x00);  // SR (Sustain Rate) = 0 (最遅)
-    chip.setRegister(0xE2, 0x0F);  // RR (Release Rate) = 15 (中速)
+    chip.setRegister(0xA2, 0x00);  // DR (Decay Rate) = 0
+    chip.setRegister(0xC2, 0x00);  // SR (Sustain Rate) = 0
+    chip.setRegister(0xE2, 0x0F);  // RR (Release Rate) = 15
     
-    // オペレータ4の設定
+    // オペレータ4の設定（キャリア）
     chip.setRegister(0x43, 0x00);  // TL (Total Level) = 0 (最大音量)
     chip.setRegister(0x83, 0x1F);  // AR (Attack Rate) = 31 (最速)
-    chip.setRegister(0xA3, 0x05);  // DR (Decay Rate) = 5
-    chip.setRegister(0xC3, 0x05);  // SR (Sustain Rate) = 5
-    chip.setRegister(0xE3, 0x0F);  // RR (Release Rate) = 15 (中速)
+    chip.setRegister(0xA3, 0x00);  // DR (Decay Rate) = 0
+    chip.setRegister(0xC3, 0x00);  // SR (Sustain Rate) = 0
+    chip.setRegister(0xE3, 0x0F);  // RR (Release Rate) = 15
     
-    // 周波数の設定（A4 = 440Hz）
-    // YM2151の周波数設定は複雑なので、簡易的に設定
-    uint16_t freq_value = 880;  // 仮の値
+    // マルチプライヤーの設定
+    chip.setRegister(0x30, 0x01);  // OP1: MULT=1
+    chip.setRegister(0x31, 0x01);  // OP2: MULT=1
+    chip.setRegister(0x32, 0x01);  // OP3: MULT=1
+    chip.setRegister(0x33, 0x01);  // OP4: MULT=1
+    
+    // A4（440Hz）の設定
+    float frequency = 440.0f;  // A4 = 440Hz
+    uint16_t freq_value = static_cast<uint16_t>(frequency * 2.0f);  // 簡易的な変換
+    
+    // 周波数レジスタの設定
     chip.setRegister(0x10 + channel, freq_value & 0xFF);  // 周波数下位8ビット
     chip.setRegister(0x18 + channel, freq_value >> 8);    // 周波数上位8ビット
     
     // キーオン
     chip.setRegister(0x08, 0x80 | channel);  // チャンネル0のキーオン
+    
+    std::cout << "Frequency: " << frequency << " Hz" << std::endl;
+    std::cout << "Frequency Register Value: 0x" << std::hex << freq_value << std::dec << std::endl;
     
     // 音声生成
     const int duration_seconds = 3;
@@ -128,6 +139,13 @@ int main() {
     for (int i = 0; i < total_samples; i += 1024) {
         int samples_to_generate = std::min(1024, total_samples - i);
         chip.generate(&output_buffer[i], samples_to_generate);
+        
+        // バッファの内容を確認（デバッグ用）
+        float sum = 0.0f;
+        for (int j = 0; j < samples_to_generate; j++) {
+            sum += std::abs(output_buffer[i + j]);
+        }
+        std::cout << "Sample block " << i/1024 << " average value: " << sum / samples_to_generate << std::endl;
     }
     
     // 1秒後にキーオフ
