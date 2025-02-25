@@ -1,0 +1,94 @@
+name: CI
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    name: ${{ matrix.os }}-${{ matrix.compiler }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+        compiler: [gcc, clang, msvc]
+        exclude:
+          # MSVC is only available on Windows
+          - os: ubuntu-latest
+            compiler: msvc
+          - os: macos-latest
+            compiler: msvc
+          # Use only one compiler on Windows to avoid redundancy
+          - os: windows-latest
+            compiler: gcc
+          - os: windows-latest
+            compiler: clang
+
+    steps:
+    - uses: actions/checkout@v3
+
+    - name: Install dependencies (Ubuntu)
+      if: matrix.os == 'ubuntu-latest'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cmake build-essential
+
+    - name: Install dependencies (macOS)
+      if: matrix.os == 'macos-latest'
+      run: |
+        brew install cmake
+
+    - name: Configure CMake (GCC)
+      if: matrix.compiler == 'gcc'
+      run: |
+        mkdir -p build
+        cd build
+        cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=gcc -DCMAKE_CXX_COMPILER=g++
+
+    - name: Configure CMake (Clang)
+      if: matrix.compiler == 'clang'
+      run: |
+        mkdir -p build
+        cd build
+        cmake .. -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++
+
+    - name: Configure CMake (MSVC)
+      if: matrix.compiler == 'msvc'
+      run: |
+        mkdir -p build
+        cd build
+        cmake .. -DCMAKE_BUILD_TYPE=Release
+
+    - name: Build
+      run: |
+        cd build
+        cmake --build . --config Release
+
+    - name: Run sample program (Unix)
+      if: matrix.os != 'windows-latest'
+      run: |
+        cd build
+        ./simple_tone
+
+    - name: Run sample program (Windows)
+      if: matrix.os == 'windows-latest'
+      run: |
+        cd build
+        .\Release\simple_tone.exe
+
+    - name: Upload WAV file (Unix)
+      if: matrix.os != 'windows-latest'
+      uses: actions/upload-artifact@v3
+      with:
+        name: ym2151_tone_${{ matrix.os }}_${{ matrix.compiler }}
+        path: build/ym2151_tone.wav
+
+    - name: Upload WAV file (Windows)
+      if: matrix.os == 'windows-latest'
+      uses: actions/upload-artifact@v3
+      with:
+        name: ym2151_tone_${{ matrix.os }}_${{ matrix.compiler }}
+        path: build/Release/ym2151_tone.wav
