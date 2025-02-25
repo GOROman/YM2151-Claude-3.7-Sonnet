@@ -28,7 +28,7 @@ jobs:
             compiler: clang
 
     steps:
-    - uses: actions/checkout@v3
+    - uses: actions/checkout@v4
 
     - name: Install dependencies (Ubuntu)
       if: matrix.os == 'ubuntu-latest'
@@ -81,14 +81,14 @@ jobs:
 
     - name: Upload WAV file (Unix)
       if: matrix.os != 'windows-latest'
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: ym2151_tone_${{ matrix.os }}_${{ matrix.compiler }}
         path: build/ym2151_tone.wav
 
     - name: Upload WAV file (Windows)
       if: matrix.os == 'windows-latest'
-      uses: actions/upload-artifact@v3
+      uses: actions/upload-artifact@v4
       with:
         name: ym2151_tone_${{ matrix.os }}_${{ matrix.compiler }}
         path: build/Release/ym2151_tone.wav
