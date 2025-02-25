@@ -79,6 +79,7 @@ public:
     void setFrequency(uint16_t frequency);
     void setAlgorithm(uint8_t algorithm);
     void setFeedback(uint8_t feedback);
+    void setSampleRate(uint32_t rate);
     void keyOn();
     void keyOff();
     void updateEnvelopes();
@@ -91,6 +92,7 @@ private:
     uint16_t frequency_;
     uint8_t algorithm_;
     uint8_t feedback_;
+    uint32_t sample_rate_;
     bool keyOnFlag_;
     float output_;
     float feedback_buffer_[2];
