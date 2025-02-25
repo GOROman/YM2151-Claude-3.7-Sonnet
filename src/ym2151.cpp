@@ -197,7 +197,7 @@ float Operator::getOutput(float phase, float modulation) {
 }
 
 // Channel実装
-Channel::Channel() : frequency_(0), algorithm_(0), feedback_(0), keyOnFlag_(false), output_(0.0f) {
+Channel::Channel() : frequency_(0), algorithm_(0), feedback_(0), sample_rate_(44100), keyOnFlag_(false), output_(0.0f) {
     feedback_buffer_[0] = 0.0f;
     feedback_buffer_[1] = 0.0f;
     reset();
@@ -213,10 +213,15 @@ void Channel::reset() {
     frequency_ = 0;
     algorithm_ = 0;
     feedback_ = 0;
+    sample_rate_ = 44100;  // デフォルトサンプリングレート
     keyOnFlag_ = false;
     output_ = 0.0f;
     feedback_buffer_[0] = 0.0f;
     feedback_buffer_[1] = 0.0f;
+}
+
+void Channel::setSampleRate(uint32_t rate) {
+    sample_rate_ = rate;
 }
 
 void Channel::setFrequency(uint16_t frequency) {
@@ -262,7 +267,7 @@ Operator& Channel::getOperator(int index) {
 
 float Channel::getOutput() {
     // 基本位相の計算
-    float base_phase = TWO_PI * frequency_ / 44100.0f;  // サンプリングレートは仮に44.1kHzとする
+    float base_phase = TWO_PI * frequency_ / static_cast<float>(sample_rate_);
     
     // フィードバック値の計算
     float feedback = 0.0f;
@@ -378,6 +383,7 @@ void Chip::reset() {
     // チャンネルの初期化
     for (auto& channel : channels_) {
         channel.reset();
+        channel.setSampleRate(sample_rate_);
     }
     
     // タイマーの初期化
@@ -467,6 +473,11 @@ uint8_t Chip::getRegister(uint8_t reg) const {
 
 void Chip::setSampleRate(uint32_t rate) {
     sample_rate_ = rate;
+    
+    // 各チャンネルにもサンプリングレートを設定
+    for (auto& channel : channels_) {
+        channel.setSampleRate(rate);
+    }
 }
 
 Channel& Chip::getChannel(int index) {
