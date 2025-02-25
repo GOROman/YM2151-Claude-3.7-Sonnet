@@ -4,6 +4,7 @@
 #include <vector>
 #include <cmath>
 #include <cstdint>
+#include <algorithm>  // std::clamp用
 
 // WAVファイルヘッダー構造体
 struct WAVHeader {
